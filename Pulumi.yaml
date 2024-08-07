@@ -1,0 +1,10 @@
+name: resize-func-pulumi
+runtime:
+  name: python
+  options:
+    toolchain: poetry
+description: When an image is uploaded to existing s3, resize the image and upload it to another s3
+config:
+  pulumi:tags:
+    value:
+      pulumi:template: https://www.pulumi.com/ai/api/project/b59a46f4-d87b-4259-9bc0-14a544b97a3f.zip
