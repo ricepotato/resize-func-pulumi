@@ -1,11 +1,16 @@
+[tool.poetry]
+name = "resize-func-pulumi"
+version = "0.1.0"
+description = ""
+authors = ["Ben <ben@ahnlab.io>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+pulumi = "^3.129.0"
+pulumi-aws = "^6.49.1"
+
+
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
-
-[tool]
-[tool.poetry]
-package-mode = false
-[tool.poetry.dependencies]
-pulumi = ">=3"
-pulumi_aws = ">=6.13.3"
-python = "^3.11"
