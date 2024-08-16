@@ -1,92 +1,86 @@
 import pulumi
 import pulumi_aws as aws
+import json
 
+# 만들어질 함수 이름
+function_name = "resize_function"
+# 이미 존재하는 s3 버킷 이름 (버킷이 존재 해야 함)
+existing_bucket_name = "pulumi-resize-bucket"
 
+assume_role = aws.iam.get_policy_document(
+    statements=[
+        {
+            "effect": "Allow",
+            "principals": [
+                {
+                    "type": "Service",
+                    "identifiers": ["lambda.amazonaws.com"],
+                }
+            ],
+            "actions": ["sts:AssumeRole"],
+        }
+    ]
+)
 
-# Existing buckets
-source_bucket_name = "my-bucket"
+resize_function_role = aws.iam.Role(
+    "resize_function_role",
+    name="resize_function_role",
+    assume_role_policy=assume_role.json,
+)
 
-# Source and destination buckets
-source_bucket = aws.s3.Bucket(source_bucket_name)
-
-aws.s3.BucketNotification("bucket_notification", bucket=source_bucket.id)
-
-# Lambda IAM Role
-lambda_role = aws.iam.Role("lambdaRole",
-    assume_role_policy="""{
-        "Version": "2012-10-17",
-        "Statement": [
-            {
-                "Action": "sts:AssumeRole",
-                "Principal": {
-                    "Service": "lambda.amazonaws.com"
+cloudwatch_policy = aws.iam.RolePolicy(
+    "cloudwatch_policy",
+    role=resize_function_role.name,
+    policy=json.dumps(
+        {
+            "Version": "2012-10-17",
+            "Statement": [
+                {
+                    "Effect": "Allow",
+                    "Action": "logs:CreateLogGroup",
+                    "Resource": "arn:aws:logs:ap-northeast-2:632854243364:*",
                 },
-                "Effect": "Allow",
-                "Sid": ""
-            }
-        ]
-    }"""
+                {
+                    "Effect": "Allow",
+                    "Action": ["logs:CreateLogStream", "logs:PutLogEvents"],
+                    "Resource": [
+                        f"arn:aws:logs:ap-northeast-2:632854243364:log-group:/aws/lambda/{function_name}:*"
+                    ],
+                },
+            ],
+        }
+    ),
 )
 
-
-
-# IAM Policy for Lambda
-lambda_policy = aws.iam.RolePolicy("lambdaPolicy",
-    role=lambda_role.id,
-    policy={
-        "Version": "2012-10-17",
-        "Statement": [
-            {
-                "Effect": "Allow",
-                "Action": [
-                    "logs:*"
-                ],
-                "Resource": "arn:aws:logs:*:*:*"
-            },
-            {
-                "Effect": "Allow",
-                "Action": [
-                    "s3:GetObject",
-                    "s3:PutObject"
-                ],
-                "Resource": [
-                    f"arn:aws:s3:::{source_bucket_name}/*",
-                ]
-            }
-        ]
-    }
-)
-
-# Lambda function for image resizing
-resize_function = aws.lambda_.Function("resizeFunction",
-    role=lambda_role.arn,
+func = aws.lambda_.Function(
+    "func",
+    code=pulumi.AssetArchive({".": pulumi.FileArchive("./lambda")}),
+    name=function_name,
+    role=resize_function_role.arn,
     runtime="python3.11",
     handler="handler.resize_image",
-    code=pulumi.AssetArchive({
-        ".": pulumi.FileArchive("./lambda")
-    })
 )
 
-# S3 Bucket notification to trigger the Lambda function
-bucket_notification = aws.s3.BucketNotification("bucketNotification",
-    bucket=source_bucket.id,
-    lambda_functions=[aws.s3.BucketNotificationLambdaFunctionArgs(
-        lambda_function_arn=resize_function.arn,
-        events=["s3:ObjectCreated:*"],
-        filter_prefix="/images/"
-    )]
-)
-
-# Permission for S3 to invoke the Lambda function
-lambda_permission = aws.lambda_.Permission("lambdaPermission",
+# 존재하는 s3 bucket 에 접근함
+bucket = aws.s3.Bucket.get("bucket", id=existing_bucket_name)
+allow_bucket = aws.lambda_.Permission(
+    "allow_bucket",
+    statement_id="AllowExecutionFromS3Bucket",
     action="lambda:InvokeFunction",
-    function=resize_function.arn,
+    function=func.arn,
     principal="s3.amazonaws.com",
-    source_arn=source_bucket.arn
+    source_arn=bucket.arn,
 )
 
-# Export the names of the buckets
-pulumi.export("source_bucket", source_bucket.id)
-pulumi.export("resize_function", resize_function.arn)
-pulumi.export("lambda_role", lambda_role.arn)
-pulumi.export("bucket_notification", bucket_notification.id)
+bucket_notification = aws.s3.BucketNotification(
+    "bucket_notification",
+    bucket=bucket.id,
+    lambda_functions=[
+        {
+            "lambda_function_arn": func.arn,
+            "events": ["s3:ObjectCreated:*"],
+            "filter_prefix": "images/",
+        }
+    ],
+    opts=pulumi.ResourceOptions(depends_on=[allow_bucket]),
+)
